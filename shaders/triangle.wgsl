@@ -10,5 +10,5 @@ fn vs_main(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(0.9, 0.2, 0.4, 1.0);
+    return vec4<f32>(0.2, 0.9, 0.4, 1.0);
 }
