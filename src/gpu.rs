@@ -11,6 +11,8 @@ pub struct GpuState {
     pub config: wgpu::SurfaceConfiguration,
     pub size: PhysicalSize<u32>,
     pub pipeline: wgpu::RenderPipeline,
+    pub uniform_buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl GpuState {
@@ -74,10 +76,43 @@ impl GpuState {
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/triangle.wgsl").into()),
         });
 
+        // Create uniform buffer for the vertical offset
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("uniform buffer"),
+            size: 16, // vec4<f32> alignment (we only use one f32 but need alignment)
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create bind group layout
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        // Create bind group
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bind group"),
+            layout: &bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         // Pipeline (no vertex buffer; we use builtin vertex_index)
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -95,7 +130,7 @@ impl GpuState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -114,6 +149,8 @@ impl GpuState {
             config,
             size,
             pipeline,
+            uniform_buffer,
+            bind_group,
         }
     }
 
@@ -126,7 +163,14 @@ impl GpuState {
         }
     }
 
-    pub fn render(&mut self) -> Result<(), SurfaceError> {
+    pub fn render(&mut self, vertical_offset: f32, rotation: f32, explosion_timer: f32) -> Result<(), SurfaceError> {
+        // Update the uniform buffer with the new offset, rotation, and explosion timer
+        self.queue.write_buffer(
+            &self.uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[vertical_offset, rotation, explosion_timer, 0.0f32]),
+        );
+
         let frame = self.surface.get_current_texture()?;
         let view = frame
             .texture
@@ -160,7 +204,10 @@ impl GpuState {
                 timestamp_writes: None,
             });
             rpass.set_pipeline(&self.pipeline);
-            rpass.draw(0..3, 0..1);
+            rpass.set_bind_group(0, &self.bind_group, &[]);
+            rpass.draw(0..3, 0..1); // Triangle
+            rpass.draw(3..9, 0..1); // Floor (6 vertices for 2 triangles)
+            rpass.draw(9..39, 0..1); // Explosion particles (30 vertices for 10 triangles)
         }
 
         self.queue.submit(Some(encoder.finish()));
